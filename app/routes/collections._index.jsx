@@ -8,6 +8,7 @@ import {Pagination, getPaginationVariables, Image} from '@shopify/hydrogen';
 export async function loader({context, request}) {
   const paginationVariables = getPaginationVariables(request, {
     pageBy: 12,
+    
   });
 
   const {collections} = await context.storefront.query(COLLECTIONS_QUERY, {
