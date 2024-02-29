@@ -52,7 +52,6 @@ export function links() {
 }
 
 /**
- * Access the result of the root loader from a React component.
  * @return {LoaderReturnData}
  */
 export const useRootLoaderData = () => {
@@ -64,15 +63,22 @@ export const useRootLoaderData = () => {
  * @param {LoaderFunctionArgs}
  */
 export async function loader({context}) {
-  const {storefront, customerAccount, cart} = context;
+  const {storefront, session, cart} = context;
+  const customerAccessToken = await session.get('customerAccessToken');
   const publicStoreDomain = context.env.PUBLIC_STORE_DOMAIN;
 
-  const isLoggedInPromise = customerAccount.isLoggedIn();
+  // validate the customer access token is valid
+  const {isLoggedIn, headers} = await validateCustomerAccessToken(
+    session,
+    customerAccessToken,
+  );
+
+  // defer the cart query by not awaiting it
   const cartPromise = cart.get();
 
   // defer the footer query (below the fold)
   const footerPromise = storefront.query(FOOTER_QUERY, {
-    cache: storefront.CacheLong(),
+    cache: storefront.CacheNone(),
     variables: {
       footerMenuHandle: 'footer', // Adjust to your footer menu handle
     },
@@ -80,25 +86,21 @@ export async function loader({context}) {
 
   // await the header query (above the fold)
   const headerPromise = storefront.query(HEADER_QUERY, {
-    cache: storefront.CacheLong(),
+    cache: storefront.CacheNone(),
     variables: {
       headerMenuHandle: 'main-menu', // Adjust to your header menu handle
     },
   });
-
+  
   return defer(
     {
       cart: cartPromise,
       footer: footerPromise,
       header: await headerPromise,
-      isLoggedIn: isLoggedInPromise,
+      isLoggedIn,
       publicStoreDomain,
     },
-    {
-      headers: {
-        'Set-Cookie': await context.session.commit(),
-      },
-    },
+    {headers},
   );
 }
 
@@ -106,7 +108,12 @@ export default function App() {
   const nonce = useNonce();
   /** @type {LoaderReturnData} */
   const data = useLoaderData();
-
+  const inlineStyles = {
+    '--primary-background-color':`${data?.header?.shop?.brand?.colors?.primary[0]?.background}`,
+    '--primary-foreground-color':`${data?.header?.shop?.brand?.colors?.primary[0]?.foreground}`,
+    '--secondary-background-color': `${data?.header?.shop?.brand?.colors?.secondary[0]?.background}`,
+    '--secondary-foreground-color': `${data?.header?.shop?.brand?.colors?.secondary[0]?.foreground}`,
+  };
   return (
     <html lang="en">
       <head>
@@ -114,6 +121,13 @@ export default function App() {
         <meta name="viewport" content="width=device-width,initial-scale=1" />
         <Meta />
         <Links />
+        <style>
+          {`
+            :root {
+              ${Object.entries(inlineStyles).map(([name, value]) => `--${name}: ${value};`).join('\n')}
+            }
+          `}
+        </style>
       </head>
       <body>
         <Layout {...data}>
@@ -169,6 +183,41 @@ export function ErrorBoundary() {
   );
 }
 
+/**
+ * Validates the customer access token and returns a boolean and headers
+ * @see https://shopify.dev/docs/api/storefront/latest/objects/CustomerAccessToken
+ *
+ * @example
+ * ```js
+ * const {isLoggedIn, headers} = await validateCustomerAccessToken(
+ *  customerAccessToken,
+ *  session,
+ * );
+ * ```
+ * @param {LoaderFunctionArgs['context']['session']} session
+ * @param {CustomerAccessToken} [customerAccessToken]
+ */
+async function validateCustomerAccessToken(session, customerAccessToken) {
+  let isLoggedIn = false;
+  const headers = new Headers();
+  if (!customerAccessToken?.accessToken || !customerAccessToken?.expiresAt) {
+    return {isLoggedIn, headers};
+  }
+
+  const expiresAt = new Date(customerAccessToken.expiresAt).getTime();
+  const dateNow = Date.now();
+  const customerAccessTokenExpired = expiresAt < dateNow;
+
+  if (customerAccessTokenExpired) {
+    session.unset('customerAccessToken');
+    headers.append('Set-Cookie', await session.commit());
+  } else {
+    isLoggedIn = true;
+  }
+
+  return {isLoggedIn, headers};
+}
+
 const MENU_FRAGMENT = `#graphql
   fragment MenuItem on MenuItem {
     id
@@ -204,11 +253,36 @@ const HEADER_QUERY = `#graphql
       url
     }
     brand {
+      colors {
+        primary {
+          background
+          foreground
+        }
+        secondary {
+          background
+          foreground
+        }
+      }
+      shortDescription
+      slogan
+      coverImage {
+        id
+        image {
+          altText
+          url
+        }
+        alt
+      }
       logo {
         image {
           url
         }
       }
+    }
+    metafields(identifiers:[{ namespace: "custom", key: "test" }]) {
+      id
+      key
+      value
     }
   }
   query Header(

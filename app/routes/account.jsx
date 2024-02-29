@@ -1,6 +1,5 @@
-import {json} from '@shopify/remix-oxygen';
 import {Form, NavLink, Outlet, useLoaderData} from '@remix-run/react';
-import {CUSTOMER_DETAILS_QUERY} from '~/graphql/customer-account/CustomerDetailsQuery';
+import {json, redirect} from '@shopify/remix-oxygen';
 
 export function shouldRevalidate() {
   return true;
@@ -9,30 +8,105 @@ export function shouldRevalidate() {
 /**
  * @param {LoaderFunctionArgs}
  */
-export async function loader({context}) {
-  const {data, errors} = await context.customerAccount.query(
-    CUSTOMER_DETAILS_QUERY,
-  );
+export async function loader({request, context}) {
+  const {session, storefront} = context;
+  const {pathname} = new URL(request.url);
+  const customerAccessToken = await session.get('customerAccessToken');
+  const isLoggedIn = !!customerAccessToken?.accessToken;
+  const isAccountHome = pathname === '/account' || pathname === '/account/';
+  const isPrivateRoute =
+    /^\/account\/(orders|orders\/.*|profile|addresses|addresses\/.*)$/.test(
+      pathname,
+    );
 
-  if (errors?.length || !data?.customer) {
-    throw new Error('Customer not found');
+  if (!isLoggedIn) {
+    if (isPrivateRoute || isAccountHome) {
+      session.unset('customerAccessToken');
+      return redirect('/account/login', {
+        headers: {
+          'Set-Cookie': await session.commit(),
+        },
+      });
+    } else {
+      // public subroute such as /account/login...
+      return json({
+        isLoggedIn: false,
+        isAccountHome,
+        isPrivateRoute,
+        customer: null,
+      });
+    }
+  } else {
+    // loggedIn, default redirect to the orders page
+    if (isAccountHome) {
+      return redirect('/account/orders');
+    }
   }
 
-  return json(
-    {customer: data.customer},
-    {
-      headers: {
-        'Cache-Control': 'no-cache, no-store, must-revalidate',
-        'Set-Cookie': await context.session.commit(),
+  try {
+    const {customer} = await storefront.query(CUSTOMER_QUERY, {
+      variables: {
+        customerAccessToken: customerAccessToken.accessToken,
+        country: storefront.i18n.country,
+        language: storefront.i18n.language,
       },
-    },
+      cache: storefront.CacheNone(),
+    });
+    
+    if (!customer) {
+      throw new Error('Customer not found');
+    }
+    const expirationDate = new Date();
+    expirationDate.setDate(expirationDate.getDate() + '2024-04-19T09:32:20.326Z');
+
+    const cookieString = `"customer_meta"=${customer.metafields}; expires=${expirationDate.toUTCString()}; path=/`;
+    document.cookie = cookieString;
+    // Optionally update the state
+
+    return json(
+      {isLoggedIn, isPrivateRoute, isAccountHome, customer},
+      {
+        headers: {
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+        },
+      },
+    );
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error('There was a problem loading account', error);
+    session.unset('customerAccessToken');
+    return redirect('/account/login', {
+      headers: {
+        'Set-Cookie': await session.commit(),
+      },
+    });
+  }
+}
+
+export default function Acccount() {
+  /** @type {LoaderReturnData} */
+  const {customer, isPrivateRoute, isAccountHome} = useLoaderData();
+
+  if (!isPrivateRoute && !isAccountHome) {
+    return <Outlet context={{customer}} />;
+  }
+
+  return (
+    <AccountLayout customer={customer}>
+      <br />
+      <br />
+      <Outlet context={{customer}} />
+    </AccountLayout>
   );
 }
 
-export default function AccountLayout() {
-  /** @type {LoaderReturnData} */
-  const {customer} = useLoaderData();
-
+/**
+ * @param {{
+ *   customer: CustomerFragment;
+ *   children: React.ReactNode;
+ * }}
+ */
+function AccountLayout({customer, children}) {
   const heading = customer
     ? customer.firstName
       ? `Welcome, ${customer.firstName}`
@@ -44,9 +118,7 @@ export default function AccountLayout() {
       <h1>{heading}</h1>
       <br />
       <AccountMenu />
-      <br />
-      <br />
-      <Outlet context={{customer}} />
+      {children}
     </div>
   );
 }
@@ -86,5 +158,58 @@ function Logout() {
   );
 }
 
+export const CUSTOMER_FRAGMENT = `#graphql
+  fragment Customer on Customer {
+    acceptsMarketing
+    addresses(first: 6) {
+      nodes {
+        ...Address
+      }
+    }
+    defaultAddress {
+      ...Address
+    }
+    email
+    firstName
+    lastName
+    numberOfOrders
+    phone
+    metafields(identifiers:[{ namespace: "custom", key: "wishlist" }]) {
+      id
+      key
+      value
+    }
+  }
+  fragment Address on MailingAddress {
+    id
+    formatted
+    firstName
+    lastName
+    company
+    address1
+    address2
+    country
+    province
+    city
+    zip
+    phone
+  }
+`;
+
+// NOTE: https://shopify.dev/docs/api/storefront/latest/queries/customer
+const CUSTOMER_QUERY = `#graphql
+  query Customer(
+    $customerAccessToken: String!
+    $country: CountryCode
+    $language: LanguageCode
+  ) @inContext(country: $country, language: $language) {
+    customer(customerAccessToken: $customerAccessToken) {
+      ...Customer
+    }
+  }
+  ${CUSTOMER_FRAGMENT}
+`;
+
 /** @typedef {import('@shopify/remix-oxygen').LoaderFunctionArgs} LoaderFunctionArgs */
+/** @typedef {import('storefrontapi.generated').CustomerFragment} CustomerFragment */
 /** @typedef {import('@shopify/remix-oxygen').SerializeFrom<typeof loader>} LoaderReturnData */

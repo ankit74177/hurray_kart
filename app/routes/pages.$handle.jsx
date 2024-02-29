@@ -1,6 +1,7 @@
 import {json} from '@shopify/remix-oxygen';
 import {useLoaderData} from '@remix-run/react';
-
+import {ContactUs} from '~/components/ContactUs';
+import {Section} from '~/components/PageSection';
 /**
  * @type {MetaFunction<typeof loader>}
  */
@@ -32,12 +33,17 @@ export async function loader({params, context}) {
 export default function Page() {
   /** @type {LoaderReturnData} */
   const {page} = useLoaderData();
-
   return (
     <div className="page">
       <header>
         <h1>{page.title}</h1>
       </header>
+      {page.title=='Contact' ? (
+        <ContactUs/>
+      ):(<></>)}
+      {(page.metafields.length&&page.metafields[0]&&page.metafields[0].key=='section') ? (
+        <Section data={page.metafields[0].value}/>
+      ):(<></>)}
       <main dangerouslySetInnerHTML={{__html: page.body}} />
     </div>
   );
@@ -57,6 +63,11 @@ const PAGE_QUERY = `#graphql
       seo {
         description
         title
+      }
+      metafields(identifiers:[{ namespace: "custom", key: "section" }]) {
+        id
+        key
+        value
       }
     }
   }

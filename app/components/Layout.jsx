@@ -3,6 +3,7 @@ import {Suspense} from 'react';
 import {Aside} from '~/components/Aside';
 import {Footer} from '~/components/Footer';
 import {Header, HeaderMenu} from '~/components/Header';
+import {WelcomeMessage} from '~/components/WelcomeMessage'
 import {CartMain} from '~/components/Cart';
 import {
   PredictiveSearchForm,
@@ -17,12 +18,13 @@ export function Layout({cart, children = null, footer, header, isLoggedIn}) {
     <>
       <CartAside cart={cart} />
       <SearchAside />
-      <MobileMenuAside menu={header?.menu} shop={header?.shop} />
-      {header && <Header header={header} cart={cart} isLoggedIn={isLoggedIn} />}
+      <MobileMenuAside menu={header.menu} shop={header.shop} />
+      <WelcomeMessage shop={header.shop}/>
+      <Header header={header} cart={cart} isLoggedIn={isLoggedIn} />
       <main>{children}</main>
       <Suspense>
         <Await resolve={footer}>
-          {(footer) => <Footer menu={footer?.menu} shop={header?.shop} />}
+          {(footer) => <Footer menu={footer.menu} shop={header.shop} />}
         </Await>
       </Suspense>
     </>
@@ -63,15 +65,7 @@ function SearchAside() {
                 type="search"
               />
               &nbsp;
-              <button
-                onClick={() => {
-                  window.location.href = inputRef?.current?.value
-                    ? `/search?q=${inputRef.current.value}`
-                    : `/search`;
-                }}
-              >
-                Search
-              </button>
+              <button type="submit">Search</button>
             </div>
           )}
         </PredictiveSearchForm>
@@ -89,16 +83,13 @@ function SearchAside() {
  */
 function MobileMenuAside({menu, shop}) {
   return (
-    menu &&
-    shop?.primaryDomain?.url && (
-      <Aside id="mobile-menu-aside" heading="MENU">
-        <HeaderMenu
-          menu={menu}
-          viewport="mobile"
-          primaryDomainUrl={shop.primaryDomain.url}
-        />
-      </Aside>
-    )
+    <Aside id="mobile-menu-aside" heading="MENU">
+      <HeaderMenu
+        menu={menu}
+        viewport="mobile"
+        primaryDomainUrl={shop.primaryDomain.url}
+      />
+    </Aside>
   );
 }
 
@@ -108,7 +99,7 @@ function MobileMenuAside({menu, shop}) {
  *   children?: React.ReactNode;
  *   footer: Promise<FooterQuery>;
  *   header: HeaderQuery;
- *   isLoggedIn: Promise<boolean>;
+ *   isLoggedIn: boolean;
  * }} LayoutProps
  */
 

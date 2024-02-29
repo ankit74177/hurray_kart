@@ -1,24 +1,57 @@
-import {Link, Form, useParams, useFetcher} from '@remix-run/react';
+import {Link, Form, useParams, useFetcher, useFetchers} from '@remix-run/react';
 import {Image, Money, Pagination} from '@shopify/hydrogen';
 import React, {useRef, useEffect} from 'react';
-import {applyTrackingParams} from '~/lib/search';
 
 export const NO_PREDICTIVE_SEARCH_RESULTS = [
   {type: 'queries', items: []},
   {type: 'products', items: []},
-  {type: 'collections', items: []},
-  {type: 'pages', items: []},
-  {type: 'articles', items: []},
+  {type: 'collections', items: []}
 ];
 
 /**
  * @param {{searchTerm: string}}
  */
+let apiCall = false;
 export function SearchForm({searchTerm}) {
+
+
+  const handleScroll = () => {
+    const nextinfiniteScrollElement = document.getElementById('next-infinite-scroll');
+    const previnfiniteScrollElement = document.getElementById('prev-infinite-scroll');
+    if (nextisInViewport(nextinfiniteScrollElement) && apiCall) {
+      apiCall = false
+      nextinfiniteScrollElement.click();
+    }
+    if (previsInViewport(previnfiniteScrollElement) && apiCall) {
+      apiCall = false
+      previnfiniteScrollElement.click();
+    }
+  };
+  const nextisInViewport = (element) => {
+    if (!element) return false;
+    const rect = element.getBoundingClientRect();
+    return (
+      rect.bottom <= (window.innerHeight || document.documentElement.clientHeight)
+    );
+  };
+  const previsInViewport = (element) => {
+    if (!element) return false;
+    const rect = element.getBoundingClientRect();
+    return (
+      rect.top >= 0
+    );
+  };
+
+
+
   const inputRef = useRef(null);
 
   // focus the input when cmd+k is pressed
   useEffect(() => {
+    if (apiCall) {
+      window.addEventListener('scroll', handleScroll);
+      return () => window.removeEventListener('scroll', handleScroll);
+    }
     function handleKeyDown(event) {
       if (event.key === 'k' && event.metaKey) {
         event.preventDefault();
@@ -53,11 +86,10 @@ export function SearchForm({searchTerm}) {
 }
 
 /**
- * @param {Pick<FetchSearchResultsReturn['searchResults'], 'results'> & {
- *   searchTerm: string;
- * }}
+ * @param {Pick<FetchSearchResultsReturn['searchResults'], 'results'>}
  */
-export function SearchResults({results, searchTerm}) {
+export function SearchResults({results}) {
+  apiCall = true;
   if (!results) {
     return null;
   }
@@ -67,35 +99,15 @@ export function SearchResults({results, searchTerm}) {
       {results &&
         keys.map((type) => {
           const resourceResults = results[type];
-
-          if (resourceResults.nodes[0]?.__typename === 'Page') {
-            const pageResults = resourceResults;
-            return resourceResults.nodes.length ? (
-              <SearchResultPageGrid key="pages" pages={pageResults} />
-            ) : null;
-          }
-
           if (resourceResults.nodes[0]?.__typename === 'Product') {
             const productResults = resourceResults;
             return resourceResults.nodes.length ? (
               <SearchResultsProductsGrid
                 key="products"
                 products={productResults}
-                searchTerm={searchTerm}
               />
             ) : null;
           }
-
-          if (resourceResults.nodes[0]?.__typename === 'Article') {
-            const articleResults = resourceResults;
-            return resourceResults.nodes.length ? (
-              <SearchResultArticleGrid
-                key="articles"
-                articles={articleResults}
-              />
-            ) : null;
-          }
-
           return null;
         })}
     </div>
@@ -103,56 +115,44 @@ export function SearchResults({results, searchTerm}) {
 }
 
 /**
- * @param {Pick<SearchQuery, 'products'> & {searchTerm: string}}
+ * @param {Pick<SearchQuery, 'products'>}
  */
-function SearchResultsProductsGrid({products, searchTerm}) {
+function SearchResultsProductsGrid({products}) {
   return (
     <div className="search-result">
-      <h2>Products</h2>
       <Pagination connection={products}>
         {({nodes, isLoading, NextLink, PreviousLink}) => {
-          const ItemsMarkup = nodes.map((product) => {
-            const trackingParams = applyTrackingParams(
-              product,
-              `q=${encodeURIComponent(searchTerm)}`,
-            );
-
-            return (
-              <div className="search-results-item" key={product.id}>
-                <Link
-                  prefetch="intent"
-                  to={`/products/${product.handle}${trackingParams}`}
-                >
-                  {product.variants.nodes[0].image && (
-                    <Image
-                      data={product.variants.nodes[0].image}
-                      alt={product.title}
-                      width={50}
-                    />
-                  )}
-                  <div>
-                    <p>{product.title}</p>
-                    <small>
-                      <Money data={product.variants.nodes[0].price} />
-                    </small>
-                  </div>
-                </Link>
-              </div>
-            );
-          });
+          const itemsMarkup = nodes.map((product) => (
+            <div className="search-results-item" key={product.id}>
+              <Link prefetch="intent" to={`/products/${product.handle}`}>
+              {product.featuredImage && (
+              <Image
+                alt={product.featuredImage.altText || product.title}
+                aspectRatio="auto"
+                data={product.featuredImage}
+                sizes="(min-width: 45em) 400px, 100vw"
+              />
+            )}
+            <h4>{product.title}</h4>
+            <small>
+              <Money data={product.priceRange.minVariantPrice} />
+            </small>
+              </Link>
+            </div>
+          ));
           return (
             <div>
               <div>
-                <PreviousLink>
+                <PreviousLink id='prev-infinite-scroll'>
                   {isLoading ? 'Loading...' : <span>↑ Load previous</span>}
                 </PreviousLink>
               </div>
-              <div>
-                {ItemsMarkup}
+              <div className="products-grid">
+                {itemsMarkup}
                 <br />
               </div>
               <div>
-                <NextLink>
+                <NextLink id='next-infinite-scroll'>
                   {isLoading ? 'Loading...' : <span>Load more ↓</span>}
                 </NextLink>
               </div>
@@ -160,48 +160,6 @@ function SearchResultsProductsGrid({products, searchTerm}) {
           );
         }}
       </Pagination>
-      <br />
-    </div>
-  );
-}
-
-/**
- * @param {Pick<SearchQuery, 'pages'>}
- */
-function SearchResultPageGrid({pages}) {
-  return (
-    <div className="search-result">
-      <h2>Pages</h2>
-      <div>
-        {pages?.nodes?.map((page) => (
-          <div className="search-results-item" key={page.id}>
-            <Link prefetch="intent" to={`/pages/${page.handle}`}>
-              {page.title}
-            </Link>
-          </div>
-        ))}
-      </div>
-      <br />
-    </div>
-  );
-}
-
-/**
- * @param {Pick<SearchQuery, 'articles'>}
- */
-function SearchResultArticleGrid({articles}) {
-  return (
-    <div className="search-result">
-      <h2>Articles</h2>
-      <div>
-        {articles?.nodes?.map((article) => (
-          <div className="search-results-item" key={article.id}>
-            <Link prefetch="intent" to={`/blogs/${article.handle}`}>
-              {article.title}
-            </Link>
-          </div>
-        ))}
-      </div>
       <br />
     </div>
   );
@@ -223,9 +181,7 @@ export function PredictiveSearchForm({
   ...props
 }) {
   const params = useParams();
-  const fetcher = useFetcher({
-    key: 'search',
-  });
+  const fetcher = useFetcher();
   const inputRef = useRef(null);
 
   function fetchResults(event) {
@@ -235,7 +191,7 @@ export function PredictiveSearchForm({
       : searchAction;
     const newSearchTerm = event.target.value || '';
     fetcher.submit(
-      {q: newSearchTerm, limit: '6'},
+      {q: newSearchTerm, limit: '9'},
       {method, action: localizedAction},
     );
   }
@@ -292,6 +248,7 @@ export function PredictiveSearchResults() {
           />
         ))}
       </div>
+      {/* view all results /search?q=term */}
       {searchTerm.current && (
         <Link onClick={goToSearchResult} to={`/search?q=${searchTerm.current}`}>
           <p>
@@ -384,9 +341,10 @@ function SearchResultItem({goToSearchResult, item}) {
 }
 
 function usePredictiveSearch() {
-  const searchFetcher = useFetcher({key: 'search'});
+  const fetchers = useFetchers();
   const searchTerm = useRef('');
   const searchInputRef = useRef(null);
+  const searchFetcher = fetchers.find((fetcher) => fetcher.data?.searchResults);
 
   if (searchFetcher?.state === 'loading') {
     searchTerm.current = searchFetcher.formData?.get('q') || '';
@@ -419,9 +377,7 @@ function usePredictiveSearch() {
  */
 function pluralToSingularSearchType(type) {
   const plural = {
-    articles: 'ARTICLE',
     collections: 'COLLECTION',
-    pages: 'PAGE',
     products: 'PRODUCT',
     queries: 'QUERY',
   };
@@ -456,8 +412,6 @@ function pluralToSingularSearchType(type) {
  *   | {type: 'queries'; items: Array<NormalizedPredictiveSearchResultItem>}
  *   | {type: 'products'; items: Array<NormalizedPredictiveSearchResultItem>}
  *   | {type: 'collections'; items: Array<NormalizedPredictiveSearchResultItem>}
- *   | {type: 'pages'; items: Array<NormalizedPredictiveSearchResultItem>}
- *   | {type: 'articles'; items: Array<NormalizedPredictiveSearchResultItem>}
  * >} NormalizedPredictiveSearchResults
  */
 /**

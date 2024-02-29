@@ -1,9 +1,8 @@
 import {defer} from '@shopify/remix-oxygen';
 import {useLoaderData} from '@remix-run/react';
 import {getPaginationVariables} from '@shopify/hydrogen';
-
 import {SearchForm, SearchResults, NoSearchResults} from '~/components/Search';
-
+import {SortMenu} from '~/components/SortBy';
 /**
  * @type {MetaFunction}
  */
@@ -17,7 +16,12 @@ export const meta = () => {
 export async function loader({request, context}) {
   const url = new URL(request.url);
   const searchParams = new URLSearchParams(url.search);
-  const variables = getPaginationVariables(request, {pageBy: 8});
+  const {sortKey, reverse} = getSortValuesFromParam(
+    searchParams.get('sort')
+  );
+  const paginationVariables = getPaginationVariables(request, {
+    pageBy:12
+  });
   const searchTerm = String(searchParams.get('q') || '');
 
   if (!searchTerm) {
@@ -27,10 +31,11 @@ export async function loader({request, context}) {
     };
   }
 
-  const {errors, ...data} = await context.storefront.query(SEARCH_QUERY, {
+  const data = await context.storefront.query(SEARCH_QUERY, {
     variables: {
       query: searchTerm,
-      ...variables,
+      sortKey, reverse,
+      ...paginationVariables,
     },
   });
 
@@ -47,10 +52,7 @@ export async function loader({request, context}) {
     totalResults,
   };
 
-  return defer({
-    searchTerm,
-    searchResults,
-  });
+  return defer({searchTerm, searchResults});
 }
 
 export default function SearchPage() {
@@ -61,19 +63,58 @@ export default function SearchPage() {
     <div className="search">
       <h1>Search</h1>
       <SearchForm searchTerm={searchTerm} />
+      <div className='collection-sorting'>
+        <SortMenu/>
+      </div>
       {!searchTerm || !searchResults.totalResults ? (
         <NoSearchResults />
       ) : (
-        <SearchResults
-          results={searchResults.results}
-          searchTerm={searchTerm}
-        />
+        <SearchResults results={searchResults.results} />
       )}
     </div>
   );
 }
 
+function getSortValuesFromParam(sortParam){
+  switch (sortParam) {
+    case 'price-high-low':
+      return {
+        sortKey: 'PRICE',
+        reverse: true,
+      };
+    case 'price-low-high':
+      return {
+        sortKey: 'PRICE',
+        reverse: false,
+      };
+    // case 'best-selling':
+    //   return {
+    //     sortKey: 'BEST_SELLING',
+    //     reverse: false,
+    //   };
+    // case 'newest':
+    //   return {
+    //     sortKey: 'CREATED',
+    //     reverse: true,
+    //   };
+    case 'featured':
+      return {
+        sortKey: 'RELEVANCE',
+        reverse: false,
+      };
+    default:
+      return {
+        sortKey: 'RELEVANCE',
+        reverse: false,
+      };
+  }
+}
+
 const SEARCH_QUERY = `#graphql
+  fragment MoneyProductItem on MoneyV2 {
+    amount
+    currencyCode
+  }
   fragment SearchProduct on Product {
     __typename
     handle
@@ -82,63 +123,54 @@ const SEARCH_QUERY = `#graphql
     title
     trackingParameters
     vendor
+    featuredImage {
+      id
+      altText
+      url
+      width
+      height
+    }
+    priceRange {
+      minVariantPrice {
+        ...MoneyProductItem
+      }
+      maxVariantPrice {
+        ...MoneyProductItem
+      }
+    }
     variants(first: 1) {
       nodes {
-        id
         image {
           url
           altText
           width
           height
         }
-        price {
-          amount
-          currencyCode
-        }
-        compareAtPrice {
-          amount
-          currencyCode
-        }
         selectedOptions {
           name
           value
         }
-        product {
-          handle
-          title
-        }
       }
     }
   }
-  fragment SearchPage on Page {
-     __typename
-     handle
-    id
-    title
-    trackingParameters
-  }
-  fragment SearchArticle on Article {
-    __typename
-    handle
-    id
-    title
-    trackingParameters
-  }
   query search(
+    $query: String!
+    $sortKey: SearchSortKeys!
+    $reverse: Boolean
     $country: CountryCode
     $endCursor: String
     $first: Int
     $language: LanguageCode
     $last: Int
-    $query: String!
     $startCursor: String
   ) @inContext(country: $country, language: $language) {
     products: search(
-      query: $query,
+      query: $query
+      sortKey: $sortKey
+      reverse: $reverse
       unavailableProducts: HIDE,
       types: [PRODUCT],
       first: $first,
-      sortKey: RELEVANCE,
       last: $last,
       before: $startCursor,
       after: $endCursor
@@ -153,28 +185,6 @@ const SEARCH_QUERY = `#graphql
         hasPreviousPage
         startCursor
         endCursor
-      }
-    }
-    pages: search(
-      query: $query,
-      types: [PAGE],
-      first: 10
-    ) {
-      nodes {
-        ...on Page {
-          ...SearchPage
-        }
-      }
-    }
-    articles: search(
-      query: $query,
-      types: [ARTICLE],
-      first: 10
-    ) {
-      nodes {
-        ...on Article {
-          ...SearchArticle
-        }
       }
     }
   }
